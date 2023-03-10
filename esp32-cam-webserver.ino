@@ -224,6 +224,12 @@ const int pwmMax = pow(2,pwmresolution)-1;
     const int   daylightOffset_sec = 0;
 #endif
 
+struct tm timeinfo;
+unsigned long MillisNext = 0;
+uint32_t WakeupSec = 0;
+uint16_t IntervalCnt = 0;
+uint16_t VccMV = 0;
+
 // Critical error string; if set during init (camera hardware failure) it
 // will be returned for all http requests
 String critERR = "";
@@ -282,7 +288,7 @@ void setLamp(int newVal) {
 }
 
 void printLocalTime(bool extraData=false) {
-    struct tm timeinfo;
+    // struct tm timeinfo;
     if(!getLocalTime(&timeinfo)){
         Serial.println("Failed to obtain time");
     } else {
@@ -335,17 +341,12 @@ void StartCamera() {
     config.pin_reset = RESET_GPIO_NUM;
     config.xclk_freq_hz = xclk * 1000000;
     config.pixel_format = PIXFORMAT_JPEG;
+    // Low(ish) default framesize and quality
+    config.frame_size = FRAMESIZE_SVGA;
+    config.jpeg_quality = 12;
+    config.fb_location = CAMERA_FB_IN_PSRAM;
+    config.fb_count = 2;
     config.grab_mode = CAMERA_GRAB_LATEST;
-    // Pre-allocate large buffers
-    if(psramFound()){
-        config.frame_size = FRAMESIZE_UXGA;
-        config.jpeg_quality = 10;
-        config.fb_count = 2;
-    } else {
-        config.frame_size = FRAMESIZE_SVGA;
-        config.jpeg_quality = 12;
-        config.fb_count = 1;
-    }
 
     #if defined(CAMERA_MODEL_ESP_EYE)
         pinMode(13, INPUT_PULLUP);
@@ -648,6 +649,25 @@ void setup() {
     Serial.println(baseVersion);
     Serial.println();
 
+    analogReadResolution(12);
+    //VccMV = analogReadMilliVolts(2)*32.0/22.0;  // 3.3V-10k-22k-GND
+    VccMV = analogReadMilliVolts(2)*147.0/100.0;  // 3.3V-47k-100k-GND
+    Serial.printf("GPIO02=%1.2f V\n", VccMV/1000.0);
+    /* 
+        for (int i = 0; i < 36; i++) {
+          VccMV = analogReadMilliVolts(i);
+          Serial.printf("GPIO%02d=%1.2f V\n", i, VccMV/1000.0);
+        }
+    GPIO00=3.14 V GPIO01=0.00 V GPIO02=3.14 V GPIO03=0.00 V
+    GPIO04=0.13 V GPIO05=0.00 V GPIO06=0.00 V GPIO07=0.00 V
+    GPIO08=0.00 V GPIO09=0.00 V GPIO10=0.00 V GPIO11=0.00 V
+    GPIO12=0.79 V GPIO13=3.14 V GPIO14=1.65 V GPIO15=3.14 V
+    GPIO16=0.00 V GPIO17=0.00 V GPIO18=0.00 V GPIO19=0.00 V
+    GPIO20=0.00 V GPIO21=0.00 V GPIO22=0.00 V GPIO23=0.00 V
+    GPIO24=0.00 V GPIO25=1.23 V GPIO26=3.14 V GPIO27=3.14 V
+    GPIO28=0.00 V GPIO29=0.00 V GPIO30=0.00 V GPIO31=0.00 V
+    GPIO32=3.15 V GPIO33=3.15 V GPIO34=0.51 V GPIO35=0.33 V */
+
     // Warn if no PSRAM is detected (typically user error with board selection in the IDE)
     if(!psramFound()){
         Serial.println("\r\nFatal Error; Halting");
@@ -667,7 +687,8 @@ void setup() {
 
     #if defined(LED_PIN)  // If we have a notification LED, set it to output
         pinMode(LED_PIN, OUTPUT);
-        digitalWrite(LED_PIN, LED_ON);
+        digitalWrite(LED_PIN, LED_OFF);
+      //digitalWrite(LED_PIN, LED_ON);
     #endif
 
     // Start the SPIFFS filesystem before we initialise the camera
@@ -806,6 +827,32 @@ void setup() {
 }
 
 void loop() {
+  if (MillisNext < millis()) {     
+    MillisNext = millis() + 12000; // every 15 sec defined by WIFI_WATCHDOG
+    if ((streamCount==0) && (imagesServed!=5)) // no stream active and not blocked 
+      IntervalCnt++; 
+    else IntervalCnt=0;
+    getLocalTime(&timeinfo);
+    Serial.printf("\nTime:%02d:%02d:%02d  StC=%d StS=%d ImS=%d SecL=%d IntCnt=%d", 
+                   timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec,
+                   streamCount, streamsServed, imagesServed, MillisNext/1000, IntervalCnt);
+
+    if (IntervalCnt>4*5) { // 5 min. w/o stream
+      if (timeinfo.tm_hour>21) { 
+        WakeupSec = (23-timeinfo.tm_hour+7)*60*60 + (59-timeinfo.tm_min)*60 + (59-timeinfo.tm_sec);
+      } else if (timeinfo.tm_hour<8) { 
+        WakeupSec = (7-timeinfo.tm_hour)*60*60 + (59-timeinfo.tm_min)*60 + (59-timeinfo.tm_sec);
+      } else {  // day
+        WakeupSec = (59-timeinfo.tm_min)*60 + (59-timeinfo.tm_sec);
+      }
+      esp_sleep_enable_timer_wakeup(WakeupSec * 1000000); // sleep time in uS
+      Serial.printf(" ***** Going to sleep for %ds %02d:%02d:%02d \n", 
+                     WakeupSec, (WakeupSec/3600), ((WakeupSec/60)%60), (WakeupSec%60));
+      Serial.flush(); 
+      esp_deep_sleep_start();
+    }
+  }
+
     /*
      *  Just loop forever, reconnecting Wifi As necesscary in client mode
      * The stream and URI handler processes initiated by the startCameraServer() call at the

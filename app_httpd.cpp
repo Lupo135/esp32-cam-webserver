@@ -66,6 +66,8 @@ extern bool otaEnabled;
 extern char otaPassword[];
 extern unsigned long xclk;
 extern int sensorPID;
+extern uint16_t VccMV;
+extern uint16_t IntervalCnt;
 
 typedef struct {
         httpd_req_t *req;
@@ -600,7 +602,9 @@ static esp_err_t dump_handler(httpd_req_t *req){
     d+= sprintf(d,"Active streams: %i, Previous streams: %lu, Images captured: %lu<br>\n", streamCount, streamsServed, imagesServed);
     d+= sprintf(d,"CPU Freq: %i MHz, Xclk Freq: %i MHz<br>\n", ESP.getCpuFreqMHz(), xclk);
     d+= sprintf(d,"<span title=\"NOTE: Internal temperature sensor readings can be innacurate on the ESP32-c1 chipset, and may vary significantly between devices!\">");
-    d+= sprintf(d,"MCU temperature : %i &deg;C, %i &deg;F</span>\n<br>", McuTc, McuTf);
+  //d+= sprintf(d,"MCU temperature : %i &deg;C, %i &deg;F</span>\n<br>", McuTc, McuTf);
+    d+= sprintf(d,"MCU temperature : %i &deg;C, %i &deg;F\n<br>", McuTc, McuTf);
+    d+= sprintf(d,"VCC : %1.2fV IntervalCnt : %d </span>\n<br>", VccMV/1000.0F, IntervalCnt);
     d+= sprintf(d,"Heap: %i, free: %i, min free: %i, max block: %i<br>\n", ESP.getHeapSize(), ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
     if (psramFound()) {
         d+= sprintf(d,"Psram: %i, free: %i, min free: %i, max block: %i<br>\n", ESP.getPsramSize(), ESP.getFreePsram(), ESP.getMinFreePsram(), ESP.getMaxAllocPsram());
